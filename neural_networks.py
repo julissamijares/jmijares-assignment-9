@@ -5,11 +5,14 @@ from matplotlib.animation import FuncAnimation
 import os
 from functools import partial
 from matplotlib.patches import Circle
+from scipy.spatial import Delaunay
 
 result_dir = "results"
 os.makedirs(result_dir, exist_ok=True)
 
 # Define a simple MLP class
+import numpy as np
+
 class MLP:
     def __init__(self, input_dim, hidden_dim, output_dim, lr, activation='tanh'):
         np.random.seed(0)
@@ -23,39 +26,47 @@ class MLP:
         self.b2 = np.zeros((1, output_dim))
 
     def activate(self, x):
+        # Apply activation function and compute its derivative
         if self.activation_fn == 'tanh':
-            return np.tanh(x), 1 - np.tanh(x) ** 2
+            activation = np.tanh(x)
+            grad = 1 - activation ** 2
         elif self.activation_fn == 'relu':
-            return np.maximum(0, x), (x > 0).astype(float)
+            activation = np.maximum(0, x)
+            grad = (x > 0).astype(float)
         elif self.activation_fn == 'sigmoid':
-            s = 1 / (1 + np.exp(-x))
-            return s, s * (1 - s)
+            activation = 1 / (1 + np.exp(-x))
+            grad = activation * (1 - activation)
+        return activation, grad
 
     def forward(self, X):
         # Forward pass through the network
         self.Z1 = X @ self.W1 + self.b1
-        self.A1, self.A1_grad = self.activate(self.Z1)
+        self.A1, self.A1_grad = self.activate(self.Z1)  # Hidden layer activations and gradients
         self.Z2 = self.A1 @ self.W2 + self.b2
-        self.A2 = 1 / (1 + np.exp(-self.Z2))  # Sigmoid output
+        self.A2, self.A2_grad = self.activate(self.Z2)  # Output layer activations and gradients
         return self.A2
 
     def backward(self, X, y):
         # Compute gradients using chain rule
         m = y.shape[0]
+
+        # Output layer error and gradients
         dZ2 = self.A2 - y
         dW2 = (self.A1.T @ dZ2) / m
         db2 = np.sum(dZ2, axis=0, keepdims=True) / m
 
+        # Hidden layer error and gradients
         dA1 = dZ2 @ self.W2.T
         dZ1 = dA1 * self.A1_grad
         dW1 = (X.T @ dZ1) / m
         db1 = np.sum(dZ1, axis=0, keepdims=True) / m
 
-        # Update weights with gradient descent
+        # Update weights and biases using gradient descent
         self.W1 -= self.lr * dW1
         self.b1 -= self.lr * db1
         self.W2 -= self.lr * dW2
         self.b2 -= self.lr * db2
+
 
 def generate_data(n_samples=100):
     np.random.seed(0)
@@ -68,6 +79,7 @@ def generate_data(n_samples=100):
 from sklearn.decomposition import PCA
 import numpy as np
 
+
 def update(frame, mlp, ax_input, ax_hidden, ax_gradient, X, y):
     # Perform training steps
     for _ in range(10):
@@ -79,7 +91,7 @@ def update(frame, mlp, ax_input, ax_hidden, ax_gradient, X, y):
 
     ax_hidden.clear()
     ax_hidden.set_title(f"Hidden Space at Step {frame * 10}")
-    
+
     # 3D scatter of the hidden features
     ax_hidden.scatter(
         hidden_features[:, 0],
@@ -89,54 +101,45 @@ def update(frame, mlp, ax_input, ax_hidden, ax_gradient, X, y):
         cmap="bwr",
         alpha=0.7,
     )
-    
-    # Set the axis limits to [-1.5, 1.5] for x, y, z axes
+
+    # Set the axis limits
     ax_hidden.set_xlim([-1.5, 1.5])
     ax_hidden.set_ylim([-1.5, 1.5])
     ax_hidden.set_zlim([-1.5, 1.5])
 
-    # --- First Plane: Flat decision boundary based on first hidden unit ---
-    x_plane, y_plane = np.meshgrid(
-        np.linspace(-1.5, 1.5, 50), np.linspace(-1.5, 1.5, 50)
-    )
-    z_plane_1 = (
-        -(mlp.W1[0, 0] * x_plane + mlp.W1[1, 0] * y_plane + mlp.b1[0, 0])
-    )  # Plane based on first hidden node weights
-    ax_hidden.plot_surface(
-        x_plane,
-        y_plane,
-        z_plane_1,
-        alpha=0.5,
-        cmap="bwr",
-        rstride=100,
-        cstride=100
+    # --- Non-Flat Plane (Shape of Outer Points) ---
+    x_points, y_points, z_points = hidden_features[:, 0], hidden_features[:, 1], hidden_features[:, 2]
+    points = np.vstack((x_points, y_points, z_points)).T
+
+    # Create a Delaunay triangulation for the outer shell
+    tri = Delaunay(points[:, :2])  # Use x, y for triangulation
+
+    # Plot the outer shell plane
+    ax_hidden.plot_trisurf(
+        x_points, y_points, z_points, triangles=tri.simplices,
+        color="blue", alpha=0.6, edgecolor="none"
     )
 
-    # --- Second Plane: 3D plane surrounding the points (best fit plane) ---
-    # Apply PCA to the hidden features to get the principal components
+    # --- Best-Fit PCA Plane (Solid Green) ---
+    from sklearn.decomposition import PCA
+
     pca = PCA(n_components=3)
     pca.fit(hidden_features)
 
-    # The normal vector to the plane is the first principal component
-    normal_vector = pca.components_[2]  # Normal vector is the 3rd component
-
-    # Define the point in the plane (mean of the data points)
+    # Normal vector and plane mean
+    normal_vector = pca.components_[2]
     mean_point = np.mean(hidden_features, axis=0)
 
-    # Create a grid of points to display the plane
+    # Create a grid for the PCA plane
     x_plane, y_plane = np.meshgrid(
-        np.linspace(-1.5, 1.5, 50), np.linspace(-1.5, 1.5, 50)
+        np.linspace(-1.5, 1.5, 50),
+        np.linspace(-1.5, 1.5, 50)
     )
-    z_plane_2 = mean_point[2] - (normal_vector[0] * (x_plane - mean_point[0]) + normal_vector[1] * (y_plane - mean_point[1])) / normal_vector[2]
+    z_plane = mean_point[2] - (normal_vector[0] * (x_plane - mean_point[0]) + normal_vector[1] * (y_plane - mean_point[1])) / normal_vector[2]
 
     ax_hidden.plot_surface(
-        x_plane,
-        y_plane,
-        z_plane_2,
-        alpha=0.5,
-        cmap="coolwarm",
-        rstride=100,
-        cstride=100
+        x_plane, y_plane, z_plane,
+        alpha=0.5, color="green", edgecolor="none"
     )
 
     # --- Input Space Visualization ---
