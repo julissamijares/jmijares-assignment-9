@@ -11,7 +11,11 @@
     <form id="experiment-form">
         <div class="input-group">
             <label for="activation">Activation:</label>
-            <input type="str" id="activation" name="activation" required>
+            <select id="activation" name="activation" required>
+                <option value="tanh">Tanh</option>
+                <option value="relu">ReLU</option>
+                <option value="sigmoid">Sigmoid</option>
+            </select>
         </div>
         <div class="input-group">
             <label for="lr">Learning Rate:</label>
